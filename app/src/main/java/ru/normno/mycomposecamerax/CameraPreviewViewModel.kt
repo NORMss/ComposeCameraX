@@ -41,7 +41,6 @@ class CameraPreviewViewModel: ViewModel() {
         )
         cameraControl = camera.cameraControl
 
-        // Cancellation signals we're done with the camera
         try { awaitCancellation() } finally {
             processCameraProvider.unbindAll()
             cameraControl = null
