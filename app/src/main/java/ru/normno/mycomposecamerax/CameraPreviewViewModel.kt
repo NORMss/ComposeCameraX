@@ -1,6 +1,12 @@
 package ru.normno.mycomposecamerax
 
 import android.content.Context
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.CameraControl
 import androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
 import androidx.camera.core.FocusMeteringAction
@@ -10,13 +16,17 @@ import androidx.camera.core.SurfaceRequest
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.lifecycle.awaitInstance
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.toComposeRect
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
+@ExperimentalCamera2Interop
 class CameraPreviewViewModel: ViewModel() {
     private val _surfaceRequest = MutableStateFlow<SurfaceRequest?>(null)
     val surfaceRequest: StateFlow<SurfaceRequest?> = _surfaceRequest
@@ -24,7 +34,30 @@ class CameraPreviewViewModel: ViewModel() {
     private var surfaceMeteringPointFactory: SurfaceOrientedMeteringPointFactory? = null
     private var cameraControl: CameraControl? = null
 
-    private val cameraPreviewUseCase = Preview.Builder().build().apply {
+    private val _sensorFaceRects = MutableStateFlow(listOf<Rect>())
+    val sensorFaceRects: StateFlow<List<Rect>> = _sensorFaceRects.asStateFlow()
+
+    private val cameraPreviewUseCase = Preview.Builder()
+        .apply {
+            Camera2Interop.Extender(this)
+                .setCaptureRequestOption(
+                    CaptureRequest.STATISTICS_FACE_DETECT_MODE,
+                    CaptureRequest.STATISTICS_FACE_DETECT_MODE_FULL
+                )
+                .setSessionCaptureCallback(object : CameraCaptureSession.CaptureCallback() {
+                    override fun onCaptureCompleted(
+                        session: CameraCaptureSession,
+                        request: CaptureRequest,
+                        result: TotalCaptureResult
+                    ) {
+                        super.onCaptureCompleted(session, request, result)
+                        result.get(CaptureResult.STATISTICS_FACES)
+                            ?.map { face -> face.bounds.toComposeRect() }
+                            ?.toList()
+                            ?.let { faces -> _sensorFaceRects.update { faces } }
+                    }
+                })
+        }.build().apply {
         setSurfaceProvider { newSurfaceRequest ->
             _surfaceRequest.update { newSurfaceRequest }
             surfaceMeteringPointFactory = SurfaceOrientedMeteringPointFactory(
