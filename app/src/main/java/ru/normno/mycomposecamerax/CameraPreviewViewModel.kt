@@ -8,6 +8,7 @@ import android.hardware.camera2.TotalCaptureResult
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.CameraControl
+import androidx.camera.core.CameraSelector
 import androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.Preview
@@ -70,7 +71,7 @@ class CameraPreviewViewModel: ViewModel() {
     suspend fun bindToCamera(appContext: Context, lifecycleOwner: LifecycleOwner) {
         val processCameraProvider = ProcessCameraProvider.awaitInstance(appContext)
         val camera = processCameraProvider.bindToLifecycle(
-            lifecycleOwner, DEFAULT_BACK_CAMERA, cameraPreviewUseCase
+            lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, cameraPreviewUseCase
         )
         cameraControl = camera.cameraControl
 

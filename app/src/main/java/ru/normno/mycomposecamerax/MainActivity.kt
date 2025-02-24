@@ -7,49 +7,54 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.compose.CameraXViewfinder
+import androidx.camera.core.SurfaceRequest
 import androidx.camera.viewfinder.compose.MutableCoordinateTransformer
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.isSpecified
-import androidx.compose.ui.geometry.takeOrElse
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Matrix
+import androidx.compose.ui.graphics.setFrom
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.round
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.shouldShowRationale
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import ru.normno.mycomposecamerax.ui.theme.MyComposeCameraXTheme
 import java.util.UUID
@@ -66,6 +71,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@ExperimentalCamera2Interop
 @Composable
 fun CameraPreviewScreen(modifier: Modifier = Modifier) {
     val cameraPermissionState = rememberPermissionState(Manifest.permission.CAMERA)
@@ -123,6 +129,23 @@ fun CameraPreviewContent(
         viewModel.bindToCamera(context.applicationContext, lifecycleOwner)
     }
 
+    val sensorFaceRects by viewModel.sensorFaceRects.collectAsStateWithLifecycle()
+    val transformationInfo by
+    produceState<SurfaceRequest.TransformationInfo?>(null, surfaceRequest) {
+        try {
+            surfaceRequest?.setTransformationInfoListener(Runnable::run) { transformationInfo ->
+                value = transformationInfo
+            }
+            awaitCancellation()
+        } finally {
+            surfaceRequest?.clearTransformationInfoListener()
+        }
+    }
+    val shouldSpotlightFaces by remember {
+        derivedStateOf { sensorFaceRects.isNotEmpty() && transformationInfo != null}
+    }
+    val spotlightColor = Color(0xDDE60991)
+
     var autofocusRequest by remember { mutableStateOf(UUID.randomUUID() to Offset.Unspecified) }
 
     val autofocusRequestId = autofocusRequest.first
@@ -155,17 +178,49 @@ fun CameraPreviewContent(
             }
         )
 
-        AnimatedVisibility(
-            visible = showAutofocusIndicator,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .offset { autofocusCoords.takeOrElse { Offset.Zero }.round() }
-                .offset((-24).dp, (-24).dp)
-        ) {
-            Spacer(Modifier
-                .border(2.dp, Color.White, CircleShape)
-                .size(48.dp))
+        AnimatedVisibility(shouldSpotlightFaces, enter = fadeIn(), exit = fadeOut()) {
+            Canvas(Modifier.fillMaxSize()) {
+                val uiFaceRects = sensorFaceRects.transformToUiCoords(
+                    transformationInfo = transformationInfo,
+                    uiToBufferCoordinateTransformer = coordinateTransformer
+                )
+
+                // Fill the whole space with the color
+                drawRect(spotlightColor)
+                // Then extract each face and make it transparent
+
+                uiFaceRects.forEach { faceRect ->
+                    drawRect(
+                        Brush.radialGradient(
+                            0.4f to Color.Black, 1f to Color.Transparent,
+                            center = faceRect.center,
+                            radius = faceRect.minDimension * 2f,
+                        ),
+                        blendMode = BlendMode.DstOut
+                    )
+                }
+            }
         }
     }
+}
+
+private fun List<Rect>.transformToUiCoords(
+    transformationInfo: SurfaceRequest.TransformationInfo?,
+    uiToBufferCoordinateTransformer: MutableCoordinateTransformer
+): List<Rect> = this.map { sensorRect ->
+    val bufferToUiTransformMatrix = Matrix().apply {
+        setFrom(uiToBufferCoordinateTransformer.transformMatrix)
+        invert()
+    }
+
+    val sensorToBufferTransformMatrix = Matrix().apply {
+        transformationInfo?.let {
+            setFrom(it.sensorToBufferTransform)
+        }
+    }
+
+    val bufferRect = sensorToBufferTransformMatrix.map(sensorRect)
+    val uiRect = bufferToUiTransformMatrix.map(bufferRect)
+
+    uiRect
 }
